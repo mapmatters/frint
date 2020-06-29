@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8" />
+    <title>Filter features within map view</title>
+    <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no" />
+    <script src="https://api.mapbox.com/mapbox-gl-js/v1.11.0/mapbox-gl.js"></script>
+    <link href="https://api.mapbox.com/mapbox-gl-js/v1.11.0/mapbox-gl.css" rel="stylesheet" />
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+        }
+
+        #map {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 100%;
+        }
+    </style>
+</head>
+
+<body>
+    <style>
+        #map {
+            position: absolute;
+            left: 0;
+            top: 0;
+            bottom: 0;
+            width: 100%;
+        }
+
+        .map-overlay {
+            position: absolute;
+            width: 100%;
+            height: 30%;
+            top: 70%;
+            bottom: 0;
+            left: 0;
+            font: 12px/20px 'Helvetica Neue', Arial, Helvetica, sans-serif;
+            background-color: #fff;
+            max-height: 100%;
+            overflow: hidden;
+        }
+
+        .map-overlay fieldset {
+            display: none;
+            background: #ddd;
+            border: none;
+            padding: 10px;
+            margin: 0;
+        }
+
+        .map-overlay input {
+            display: block;
+            border: none;
+            width: 100%;
+            border-radius: 3px;
+            padding: 10px;
+            margin: 0;
+            box-sizing: border-box;
+        }
+
+        .map-overlay .listing {
+            overflow: auto;
+            max-height: 100%;
+        }
+
+        .map-overlay .listing>* {
+            display: block;
+            padding: 5px 10px;
+            margin: 0;
+        }
+
+        .map-overlay .listing a {
+            border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+            color: #404;
+            text-decoration: none;
+        }
+
+        .map-overlay .listing a:last-child {
+            border: none;
+        }
+
+        .map-overlay .listing a:hover {
+            background: #f0f0f0;
+        }
+    </style>
+
+    <div id="map"></div>
+
+    <div class="map-overlay">
+        <fieldset>
+            <input id="feature-filter" type="text" placeholder="Filter results by name" />
+        </fieldset>
+        <div id="feature-listing" class="listing"></div>
+    </div>
+
+    <script>
+        mapboxgl.accessToken =
+            'pk.eyJ1IjoibWFwbWF0dGVycyIsImEiOiJjamc0Y2p1OWwxNWN6MnBzMTJ6czRrZnY1In0.Beyp8DKNzxakGHxuSIgNfA';
+        var map = new mapboxgl.Map({
+            container: 'map',
+            style: 'mapbox://styles/mapmatters/ckc0bvrdw2oxt1jpmr45jt90g',
+            center: [127.0755, 37.5185],
+            zoom: 10,
+            scrollZoom: true
+        });
+
+
+        // Holds visible airport features for filtering
+        var campingsites = [];
+
+        // Create a popup, but don't add it to the map yet.
+        var popup = new mapboxgl.Popup({
+            closeButton: false
+        });
+
+        var filterEl = document.getElementById('feature-filter');
+        var listingEl = document.getElementById('feature-listing');
+
+        function imgClick(img) {
+            img.style.border = '5px solid pink';
+        }
+
+        function renderListings(features) {
+            var empty = document.createElement('p');
+            // Clear any existing listings
+            listingEl.innerHTML = '';
+            if (features.length) {
+                features.forEach(function (feature) {
+                    var prop = feature.properties;
+                    var item = document.createElement('a');
+                    var img = document.createElement('img');
+                    item.textContent = prop.name + ' '
+                    item.style = "text-decoration:none;";
+                    img.href = "https://www.instagram.com/explore/tags/" + prop.hashtag;
+                    item.addEventListener('mouseover', function () {
+                        // Highlight corresponding feature on the map
+                        popup
+                            .setLngLat(feature.geometry.coordinates)
+                            .setText(
+                                feature.properties.name +
+                                ' (' +
+                                feature.properties.addr +
+                                ')'
+                            )
+                            .addTo(map);
+                    });
+                    img.addEventListener('click', function () {
+                        var win = window.open(this.href, 'bar');
+                        win.focus();
+                    });
+                    img.style = "width:24px;height:24px;"
+                    img.target = 'bar';
+                    img.setAttribute('src', "img/instagram.png");
+                    img.setAttribute("onclick", "imgClick(href)");
+                    listingEl.appendChild(item).appendChild(img);
+                });
+
+                // Show the filter input
+                filterEl.parentNode.style.display = 'block';
+            } else if (features.length === 0 && filterEl.value !== '') {
+                empty.textContent = 'No results found';
+                listingEl.appendChild(empty);
+            } else {
+                empty.textContent = 'Drag the map to populate results';
+                listingEl.appendChild(empty);
+
+                // Hide the filter input
+                filterEl.parentNode.style.display = 'none';
+
+                // remove features filter
+                map.setFilter('camping', ['has', 'name']);
+            }
+        }
+
+        function normalize(string) {
+            return string.trim().toLowerCase();
+        }
+
+        function getUniqueFeatures(array, comparatorProperty) {
+            var existingFeatureKeys = {};
+            // Because features come from tiled vector data, feature geometries may be split
+            // or duplicated across tile boundaries and, as a result, features may appear
+            // multiple times in query results.
+            var uniqueFeatures = array.filter(function (el) {
+                if (existingFeatureKeys[el.properties[comparatorProperty]]) {
+                    return false;
+                } else {
+                    existingFeatureKeys[el.properties[comparatorProperty]] = true;
+                    return true;
+                }
+            });
+
+            return uniqueFeatures;
+        }
+
+        map.on('load', function () {
+            map.addSource('campingsites', {
+                'type': 'vector',
+                'url': 'mapbox://mapmatters.9ilda2dr',
+                'cluster': true,
+                // 'clusterRadius': 80
+                clusterMaxZoom: 14, // Max zoom to cluster points on
+                clusterRadius: 50 // Radius of each cluster when clustering points (defaults to 50)
+            });
+
+
+            // ponit layer
+            // map.addLayer({
+            //     'id': 'camping',
+            //     'source': 'campingsites',
+            //     'source-layer': 'camp_geo-1m11gy',
+            //     'type': 'symbol',
+            //     'layout': {
+            //         'icon-image': 'mountain-15',
+            //         'icon-padding': 0,
+            //         'icon-size': 1.5,
+            //         'icon-allow-overlap': true
+            //     }
+            // });
+            map.addLayer({
+                'id': 'camping',
+                'type': 'circle',
+                'source': 'campingsites',
+                'source-layer': 'camp_geo-1m11gy',
+                'paint': {
+                    // make circles larger as the user zooms from z12 to z22
+                    'circle-radius': {
+                    'base': 1.75,
+                    'stops': [
+                        [8, 2], [11, 6], [16, 40]
+                    ]
+                    },
+                    'circle-color': '#e55e5e'
+                }
+            });
+
+            // Layer with icons that should always be visible
+            // map.addLayer({
+            //     "id": "layer-mypoints",
+            //     "type": "symbol",
+            //     "source": "mypoints",
+            //     "layout": {
+            //         "icon-image": "monument-15",
+            //         "icon-allow-overlap": true
+            //     }
+            // });            
+
+            // // Layer with just labels that are only visible from a certain zoom level
+            map.addLayer({
+                "id": "camping-label",
+                "type": "symbol",
+                "source": "campingsites",
+                'source-layer': 'camp_geo-1m11gy',
+                "minzoom": 10, // Set zoom level to whatever suits your needs
+                'layout': {
+                    'text-field': ['get', 'name'],
+                    'text-variable-anchor': ['top', 'bottom', 'left', 'right'],
+                    'text-radial-offset': 0.5,
+                    // 'text-font': ['Noto Sans CJK JP Regular'],
+                    'text-color': '#48567A',
+                    "text-size": [
+                        "interpolate",
+                        ["linear"],
+                        ["zoom"],
+                        7,
+                        8,
+                        22,
+                        26
+                    ],
+                    'text-justify': 'auto'
+                }
+            });
+
+            var features = map.querySourceFeatures('camping', {
+                sourceLayer: 'camp_geo-1m11gy'
+            });
+
+            // var features = map.querySourceFeatures({
+            // layers: ['camping']
+            // });
+
+            // if (features) {
+            var uniqueFeatures = getUniqueFeatures(features, 'name');
+            // Populate features for the listing overlay.
+            renderListings(uniqueFeatures);
+
+            // Clear the input container
+            // filterEl.value = '';
+
+            // Store the current features in sn `airports` variable to
+            // later use for filtering on `keyup`.
+            campingsites = uniqueFeatures;
+            // }
+            // map.on('moveend', function () {
+            //     var features = map.queryRenderedFeatures({
+            //         layers: ['camping']
+            //     });
+
+            //     if (features) {
+            //         var uniqueFeatures = getUniqueFeatures(features, 'name');
+            //         // Populate features for the listing overlay.
+            //         renderListings(uniqueFeatures);
+
+            //         // Clear the input container
+            //         filterEl.value = '';
+
+            //         // Store the current features in sn `airports` variable to
+            //         // later use for filtering on `keyup`.
+            //         campingsites = uniqueFeatures;
+            //     }
+            // });
+
+            map.on('click', 'camping', function (e) {
+                // Change the cursor style as a UI indicator.
+                // map.getCanvas().style.cursor = 'pointer';
+
+                // Populate the popup and set its coordinates based on the feature.
+                var feature = e.features[0];
+                var coordinates = e.features[0].geometry.coordinates.slice();
+                while (Math.abs(e.lngLat.lng - coordinates[0]) > 180) {
+                    coordinates[0] += e.lngLat.lng > coordinates[0] ? 360 : -360;
+                }
+                new mapboxgl.Popup()
+                    .setLngLat(coordinates)
+                    .setHTML(
+                        '<h3>' + feature.properties.name + '</h3>' +  
+                        '<a style="text-decoration:none;" href=" ' + " https://www.instagram.com/explore/tags/" + feature.properties.hashtag + ' " target="bar"> '
+                            + '<img src="img/instagram.png" alt="hashtag" style="width:24px;height:24px;">' + ' </a>'
+                        + '  ' 
+                        + '<a style="text-decoration:none;" href=" '
+                        + "https://www.youtube.com/results?search_query=" + feature.properties.hashtag + ' " target="bar">'
+                            + '<img src="img/youtube.png" alt="youtube" style="width:24px;height:24px;">' + ' </a>'
+                        + '<br>' + feature.properties.addr + '<br>' + feature.properties.call_num + '</p>' )
+                    .addTo(map);
+            });
+            map.on('mouseenter', 'camping', function() {
+                map.getCanvas().style.cursor = 'pointer';
+            });
+            map.on('mouseleave', 'camping', function () {
+                map.getCanvas().style.cursor = '';
+                popup.remove();
+            });
+
+            filterEl.addEventListener('keyup', function (e) {
+                var value = normalize(e.target.value);
+
+                // Filter visible features that don't match the input value.
+                var filtered = campingsites.filter(function (feature) {
+                    var name = normalize(feature.properties.name);
+                    var code = normalize(feature.properties.addr);
+                    return name.indexOf(value) > -1 || code.indexOf(value) > -1;
+                });
+
+                // Populate the sidebar with filtered results
+                renderListings(filtered);
+
+                // Set the filter to populate features into the layer.
+                if (filtered.length) {
+                    map.setFilter('camping', [
+                        'match',
+                        ['get', 'name'],
+                        filtered.map(function (feature) {
+                            return feature.properties.name;
+                        }),
+                        true,
+                        false
+                    ]);
+                }
+            });
+
+            // Call this function on initialization
+            // passing an empty array to render an empty state
+            // renderListings([]);
+        });
+    </script>
+
+</body>
+
+</html>
